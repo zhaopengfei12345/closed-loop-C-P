@@ -1,6 +1,3 @@
-#!/usr/bin/env python3
-"""Train a 48h-to-24h STGNN forecast model on the distribution-feeder 1H dataset."""
-
 from __future__ import annotations
 
 import json
