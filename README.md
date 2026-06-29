@@ -1,6 +1,6 @@
 # Closed-Loop Predict-and-Optimize
 
-This repository contains a cleaned implementation of the paper:
+This repository contains implementation of the paper:
 
 **Fine-Grained Marginal Cost Feedback-Based Closed-Loop Predict-and-Optimize Framework for Distribution System Scheduling**.
 
