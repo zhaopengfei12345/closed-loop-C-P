@@ -1,16 +1,4 @@
-﻿#!/usr/bin/env python3
-"""Run fine-grained marginal-cost feedback + GFCN closed-loop correction.
-
-This entry point uses:
-  1) baseline net-load forecasts;
-  2) active/reactive dispatch with real day-ahead price;
-  3) bidirectional marginal-cost maps and GFCN residual correction.
-
-November 2023 trains the correction network; December 2023 is the final test.
-Best K is selected by December mean realized cost only.
-"""
-
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import argparse
 import json
