@@ -1,10 +1,9 @@
-# FGMC-GFCN IEEE 33-Bus Open-Source Code
+# Closed-Loop Predict-and-Optimize
 
-This folder contains a cleaned implementation of the paper route:
+This folder contains a implementation of the paper:
 
-**statistical net-load forecasting -> day-ahead distribution dispatch -> bidirectional marginal-cost feedback -> graph-flow residual correction -> realized replay evaluation**.
+**Fine-Grained Marginal Cost Feedback-Based Closed-Loop Predict-and-Optimize Framework for Distribution System Scheduling**.
 
-It is organized as a small package plus three command-line entry points. The code is based on the IEEE 33-bus experiments in this repository, with the experiment-search and diagnostic scripts removed.
 
 ## What Is Included
 
