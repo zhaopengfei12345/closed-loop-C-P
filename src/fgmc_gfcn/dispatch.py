@@ -49,7 +49,7 @@ class ESSParam:
 class DispatchConfig:
     data_dir: Path = Path("data") / "processed_1h"
     line_limit_default_mva: float = 7.0
-    storage_degradation_cost: float = 10.0
+    storage_degradation_cost: float = 30.0
     sell_price_ratio: float = 0.7
     rt_buy_price_adder: float = 50.0
     rt_buy_price_multiplier: float = 1.0

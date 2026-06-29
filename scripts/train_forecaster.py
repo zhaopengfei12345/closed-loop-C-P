@@ -1,4 +1,7 @@
-﻿from __future__ import annotations
+#!/usr/bin/env python3
+"""Train a 48h-to-24h STGNN forecast model on the distribution-feeder 1H dataset."""
+
+from __future__ import annotations
 
 import json
 import math
@@ -22,7 +25,7 @@ from torch.utils.data import DataLoader, TensorDataset
 
 
 DATA_PATH = Path("data") / "processed_1h" / "aligned_dataset.csv"
-RESULT_DIR = Path("results") / "lstm_1h_forecast"
+RESULT_DIR = Path("results") / "stgnn_1h_forecast"
 FIGURE_DIR = RESULT_DIR / "figures"
 
 INPUT_HOURS = 48
@@ -31,19 +34,18 @@ EPOCHS = 100
 BATCH_SIZE = 64
 LEARNING_RATE = 1e-3
 HIDDEN_SIZE = 128
-NUM_LAYERS = 2
 DROPOUT = 0.1
 PATIENCE = 10
 RANDOM_SEED = 2026
 EPS = 1e-6
 
 TRAIN_START = pd.Timestamp("2023-01-01T00:00:00Z")
-TRAIN_END = pd.Timestamp("2023-10-31T23:00:00Z")
-TEST_START = pd.Timestamp("2023-11-01T00:00:00Z")
+TRAIN_END = pd.Timestamp("2023-09-30T23:00:00Z")
+TEST_START = pd.Timestamp("2023-10-01T00:00:00Z")
 TEST_END = pd.Timestamp("2023-12-31T23:00:00Z")
 
 REPRESENTATIVE_ORIGINS = [
-    pd.Timestamp("2023-11-05T00:00:00Z"),
+    pd.Timestamp("2023-10-15T00:00:00Z"),
     pd.Timestamp("2023-11-20T00:00:00Z"),
     pd.Timestamp("2023-12-10T00:00:00Z"),
 ]
@@ -55,34 +57,6 @@ class WindowDataset:
     y: np.ndarray
     origins: pd.DatetimeIndex
     target_timestamps: list[pd.DatetimeIndex]
-
-
-class LSTMForecast(nn.Module):
-    def __init__(
-        self,
-        input_size: int,
-        hidden_size: int,
-        num_layers: int,
-        dropout: float,
-        horizon: int,
-    ) -> None:
-        super().__init__()
-        self.horizon = horizon
-        self.input_size = input_size
-        self.lstm = nn.LSTM(
-            input_size=input_size,
-            hidden_size=hidden_size,
-            num_layers=num_layers,
-            dropout=dropout if num_layers > 1 else 0.0,
-            batch_first=True,
-        )
-        self.head = nn.Linear(hidden_size, horizon * input_size)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        _, (hidden, _) = self.lstm(x)
-        last_hidden = hidden[-1]
-        out = self.head(last_hidden)
-        return out.reshape(x.shape[0], self.horizon, self.input_size)
 
 
 class GraphConv(nn.Module):
@@ -295,30 +269,16 @@ def train_model(
     train_ds: WindowDataset,
     val_ds: WindowDataset,
     input_size: int,
-    predictor: str,
-    adjacency: np.ndarray | None,
+    adjacency: np.ndarray,
 ) -> tuple[nn.Module, list[dict], float]:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    if predictor == "lstm":
-        model = LSTMForecast(
-            input_size=input_size,
-            hidden_size=HIDDEN_SIZE,
-            num_layers=NUM_LAYERS,
-            dropout=DROPOUT,
-            horizon=FORECAST_HOURS,
-        ).to(device)
-    elif predictor == "stgnn":
-        if adjacency is None:
-            raise ValueError("STGNN predictor requires a Pearson adjacency matrix")
-        model = STGNNForecast(
-            num_nodes=input_size,
-            hidden_size=HIDDEN_SIZE,
-            dropout=DROPOUT,
-            horizon=FORECAST_HOURS,
-            adjacency=adjacency,
-        ).to(device)
-    else:
-        raise ValueError(f"Unknown predictor: {predictor}")
+    model = STGNNForecast(
+        num_nodes=input_size,
+        hidden_size=HIDDEN_SIZE,
+        dropout=DROPOUT,
+        horizon=FORECAST_HOURS,
+        adjacency=adjacency,
+    ).to(device)
     train_loader = make_loader(train_ds, BATCH_SIZE, shuffle=True)
     val_loader = make_loader(val_ds, BATCH_SIZE, shuffle=False)
     loss_fn = nn.L1Loss()
@@ -329,7 +289,7 @@ def train_model(
     bad_epochs = 0
     log_rows: list[dict] = []
 
-    print(f"[INFO] Predictor: {predictor}")
+    print("[INFO] Predictor: stgnn")
     print(f"[INFO] Training on device: {device}")
     for epoch in range(1, EPOCHS + 1):
         model.train()
@@ -556,23 +516,21 @@ def save_model(
     model: nn.Module,
     feature_cols: list[str],
     best_val: float,
-    predictor: str,
-    adjacency_path: str | None,
+    adjacency_path: str,
 ) -> None:
     torch.save(
         {
             "model_state_dict": model.state_dict(),
-            "predictor": predictor,
+            "predictor": "stgnn",
             "feature_cols": feature_cols,
             "input_hours": INPUT_HOURS,
             "forecast_hours": FORECAST_HOURS,
             "input_size": len(feature_cols),
             "hidden_size": HIDDEN_SIZE,
-            "num_layers": NUM_LAYERS,
             "dropout": DROPOUT,
             "best_val_mae_standardized": best_val,
             "adjacency": {
-                "type": "abs_pearson_training_period_gcn_normalized" if predictor == "stgnn" else None,
+                "type": "abs_pearson_training_period_gcn_normalized",
                 "raw_abs_pearson_csv": adjacency_path,
             },
         },
@@ -584,12 +542,6 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Train distribution-feeder 1H net-load forecaster.")
     parser.add_argument("--data-path", type=Path, default=DATA_PATH)
     parser.add_argument("--output-dir", type=Path, default=RESULT_DIR)
-    parser.add_argument(
-        "--predictor",
-        choices=["lstm", "stgnn"],
-        default="lstm",
-        help="Forecasting backbone. stgnn uses Pearson-correlation adjacency.",
-    )
     parser.add_argument("--epochs", type=int, default=EPOCHS)
     parser.add_argument("--batch-size", type=int, default=BATCH_SIZE)
     parser.add_argument("--learning-rate", type=float, default=LEARNING_RATE)
@@ -631,7 +583,7 @@ def main() -> None:
 
     scaler_stats = {
         "feature_cols": feature_cols,
-        "predictor": args.predictor,
+        "predictor": "stgnn",
         "mean": {col: float(mean[col]) for col in feature_cols},
         "std": {col: float(std[col]) for col in feature_cols},
         "pearson_adjacency": {
@@ -644,6 +596,12 @@ def main() -> None:
             "start": TRAIN_START.strftime("%Y-%m-%dT%H:%M:%SZ"),
             "end": TRAIN_END.strftime("%Y-%m-%dT%H:%M:%SZ"),
         },
+        "forecast_output_period": {
+            "start": TEST_START.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "end": TEST_END.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "correction_train_validate_months": ["2023-10", "2023-11"],
+            "test_month": "2023-12",
+        },
     }
     (RESULT_DIR / "scaler_stats.json").write_text(json.dumps(scaler_stats, indent=2), encoding="utf-8")
 
@@ -651,11 +609,10 @@ def main() -> None:
         train_ds,
         val_ds,
         input_size=len(feature_cols),
-        predictor=args.predictor,
-        adjacency=pearson_adj_norm if args.predictor == "stgnn" else None,
+        adjacency=pearson_adj_norm,
     )
     pd.DataFrame(log_rows).to_csv(RESULT_DIR / "train_log.csv", index=False)
-    save_model(model, feature_cols, best_val, args.predictor, str(adjacency_path) if args.predictor == "stgnn" else None)
+    save_model(model, feature_cols, best_val, str(adjacency_path))
 
     pred_std = predict(model, test_ds)
     y_true = inverse_transform(test_ds.y, mean, std)
@@ -666,11 +623,11 @@ def main() -> None:
         y_pred[:, :, zero_idx] = 0.0
 
     metrics = compute_metrics(y_true, y_pred, feature_cols)
-    metrics["predictor"] = args.predictor
+    metrics["predictor"] = "stgnn"
     metrics["constant_zero_columns"] = zero_cols
     metrics["pearson_adjacency"] = {
         "raw_abs_csv": str(adjacency_path),
-        "used_by_model": bool(args.predictor == "stgnn"),
+        "used_by_model": True,
     }
     metrics["counts"] = {
         "train_windows_total": int(len(train_all.x)),
@@ -684,7 +641,7 @@ def main() -> None:
     save_predictions_long(test_ds, y_true, y_pred, feature_cols, RESULT_DIR / "test_predictions.csv")
     save_figures(test_ds, y_true, y_pred, feature_cols)
 
-    print(f"\n[OK] {args.predictor.upper()} 1H forecast training completed.")
+    print("\n[OK] STGNN 1H forecast training completed.")
     print(f"train_windows={len(train_ds.x)}")
     print(f"validation_windows={len(val_ds.x)}")
     print(f"test_windows={len(test_ds.x)}")

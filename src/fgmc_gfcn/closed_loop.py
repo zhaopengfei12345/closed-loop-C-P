@@ -36,7 +36,7 @@ from .dispatch import (
 )
 
 
-PREDICTION_PATH = Path("results") / "lstm_1h_forecast" / "test_predictions.csv"
+PREDICTION_PATH = Path("results") / "stgnn_1h_forecast" / "test_predictions.csv"
 DEFAULT_OUTPUT_DIR = Path("results") / "fgmc_gfcn_iterative_dec"
 EPS = 1e-6
 SEED = 2026
@@ -519,10 +519,12 @@ def weighted_mae(y_true: np.ndarray, y_pred: np.ndarray, weight: np.ndarray) -> 
 
 
 def load_daily_blocks(prediction_path: Path) -> dict[str, dict[str, Any]]:
-    """Load complete daily 00:00 samples for Nov/Dec from LSTM net-load predictions.
+    """Load complete daily 00:00 samples from STGNN net-load predictions.
 
     The prediction file may still contain old price records.  They are ignored.
     Only netload_bus_1 ... netload_bus_33 are used.
+    October and November samples are used for correction-model train/validation;
+    December samples are reserved for final testing.
     """
 
     pred = pd.read_csv(
@@ -534,11 +536,11 @@ def load_daily_blocks(prediction_path: Path) -> dict[str, dict[str, Any]]:
     pred["target_dt"] = pd.to_datetime(pred["target_timestamp"], utc=True)
     pred = pred[pred["forecast_dt"].dt.hour.eq(0)].copy()
 
-    parts: dict[str, list[dict[str, Any]]] = {"nov": [], "dec": []}
+    parts: dict[str, list[dict[str, Any]]] = {"correction": [], "dec": []}
     for origin, group in pred.groupby("forecast_origin", sort=True):
         origin_dt = group["forecast_dt"].iloc[0]
-        if origin_dt.month == 11:
-            split = "nov"
+        if origin_dt.month in {10, 11}:
+            split = "correction"
         elif origin_dt.month == 12:
             split = "dec"
         else:

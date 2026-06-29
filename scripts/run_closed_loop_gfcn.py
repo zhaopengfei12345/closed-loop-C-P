@@ -1,4 +1,16 @@
-﻿from __future__ import annotations
+﻿#!/usr/bin/env python3
+"""Run fine-grained marginal-cost feedback + GFCN closed-loop correction.
+
+This entry point uses:
+  1) baseline net-load forecasts;
+  2) active/reactive dispatch with real day-ahead price;
+  3) bidirectional marginal-cost maps and GFCN residual correction.
+
+October-November 2023 trains and validates the correction network; December 2023 is the final test.
+Best K is selected by December mean realized cost only.
+"""
+
+from __future__ import annotations
 
 import argparse
 import json
@@ -121,14 +133,14 @@ def main() -> None:
     print("[INFO] Price is used as real exogenous day-ahead price, not as a forecast target or NN input.")
 
     data = load_daily_blocks(args.prediction_path)
-    nov, dec = data["nov"], data["dec"]
+    correction, dec = data["correction"], data["dec"]
 
-    sigma = np.std(nov["y_pred"] - nov["y_true"], axis=(0, 2)).astype(np.float32)
+    sigma = np.std(correction["y_pred"] - correction["y_true"], axis=(0, 2)).astype(np.float32)
     sigma = np.maximum(sigma, 1e-4)
-    mean_bus = np.mean(nov["y_pred"], axis=(0, 2)).astype(np.float32)
-    std_bus = np.std(nov["y_pred"], axis=(0, 2)).astype(np.float32)
+    mean_bus = np.mean(correction["y_pred"], axis=(0, 2)).astype(np.float32)
+    std_bus = np.std(correction["y_pred"], axis=(0, 2)).astype(np.float32)
     std_bus = np.maximum(std_bus, 1e-4)
-    settlement_under_nov, settlement_over_nov = build_settlement_loss_weights(nov, price_series, config)
+    settlement_under_correction, settlement_over_correction = build_settlement_loss_weights(correction, price_series, config)
 
     # Baseline December dispatch with real price.
     baseline_dir = out_dir / "baseline"
@@ -138,7 +150,7 @@ def main() -> None:
     bm = baseline_metrics(dec, baseline_dispatch)
     summary_rows = [{"method": "Baseline", "K": 0, **bm}]
 
-    y_prev_nov = nov["y_pred"].copy()
+    y_prev_correction = correction["y_pred"].copy()
     y_prev_dec = dec["y_pred"].copy()
     all_feature_summaries: list[dict] = []
     timing_rows: list[dict] = []
@@ -153,42 +165,42 @@ def main() -> None:
         print(f"\n========== FGMC-GFCN round {k}, rho={rho:.6f} ==========")
 
         feature_start = time.perf_counter()
-        mplus_nov, mminus_nov, b_nov, regret_nov, nov_features, nov_summary = build_features_for_split(
-            "nov", k, round_dir, nov, y_prev_nov, network, price_series, solver, config, aligned, sigma
+        mplus_correction, mminus_correction, b_correction, regret_correction, correction_features, correction_summary = build_features_for_split(
+            "correction", k, round_dir, correction, y_prev_correction, network, price_series, solver, config, aligned, sigma
         )
         mplus_dec, mminus_dec, b_dec, regret_dec, dec_features, dec_summary = build_features_for_split(
             "dec", k, round_dir, dec, y_prev_dec, network, price_series, solver, config, aligned, sigma
         )
-        all_feature_summaries.extend([nov_summary, dec_summary])
-        any_dual = any_dual or bool(nov_summary.get("marginal_dual_available")) or bool(dec_summary.get("marginal_dual_available"))
+        all_feature_summaries.extend([correction_summary, dec_summary])
+        any_dual = any_dual or bool(correction_summary.get("marginal_dual_available")) or bool(dec_summary.get("marginal_dual_available"))
         feature_seconds = time.perf_counter() - feature_start
 
-        x_nov = make_inputs(y_prev_nov, mplus_nov, mminus_nov, b_nov, mean_bus, std_bus)
+        x_correction = make_inputs(y_prev_correction, mplus_correction, mminus_correction, b_correction, mean_bus, std_bus)
         training_start = time.perf_counter()
         model = train_corrector(
             k,
             round_dir,
             rho,
-            x_nov,
-            y_prev_nov,
-            nov["y_true"],
-            mplus_nov,
-            mminus_nov,
-            regret_nov,
+            x_correction,
+            y_prev_correction,
+            correction["y_true"],
+            mplus_correction,
+            mminus_correction,
+            regret_correction,
             sigma,
             mean_bus,
             std_bus,
-            settlement_under=settlement_under_nov,
-            settlement_over=settlement_over_nov,
-            b_map=b_nov,
+            settlement_under=settlement_under_correction,
+            settlement_over=settlement_over_correction,
+            b_map=b_correction,
         )
         training_seconds = time.perf_counter() - training_start
-        y_corr_nov, delta_nov = predict_corrected(model, x_nov, y_prev_nov, sigma, rho)
+        y_corr_correction, delta_correction = predict_corrected(model, x_correction, y_prev_correction, sigma, rho)
 
         x_dec = make_inputs(y_prev_dec, mplus_dec, mminus_dec, b_dec, mean_bus, std_bus)
         y_corr_dec, delta_dec = predict_corrected(model, x_dec, y_prev_dec, sigma, rho)
 
-        save_corrected_predictions(round_dir / "corrector" / "nov_corrected_predictions.csv", "nov", nov, y_prev_nov, y_corr_nov, delta_nov, mplus_nov, mminus_nov, b_nov, regret_nov)
+        save_corrected_predictions(round_dir / "corrector" / "correction_corrected_predictions.csv", "correction", correction, y_prev_correction, y_corr_correction, delta_correction, mplus_correction, mminus_correction, b_correction, regret_correction)
         save_corrected_predictions(round_dir / "evaluation" / "dec_corrected_predictions.csv", "dec", dec, y_prev_dec, y_corr_dec, delta_dec, mplus_dec, mminus_dec, b_dec, regret_dec)
 
         evaluation_start = time.perf_counter()
@@ -212,7 +224,7 @@ def main() -> None:
             f"cost={metrics['mean_realized_cost']:.2f} train={training_seconds:.2f}s"
         )
 
-        y_prev_nov, y_prev_dec = y_corr_nov, y_corr_dec
+        y_prev_correction, y_prev_dec = y_corr_correction, y_corr_dec
 
     summary = pd.DataFrame(summary_rows)
     ordered = ["method", "K", "MAE", "FGMC_weighted_MAE", "mean_realized_cost", "mean_voltage_violation", "mean_line_overload", "num_feasible_samples"]
@@ -240,7 +252,7 @@ def main() -> None:
     timing_meta = {
         "definition": {
             "corrector_training_seconds": "GraphFlow corrector training only",
-            "feature_seconds": "November and December marginal-map feature construction",
+            "feature_seconds": "October-November correction and December test marginal-map feature construction",
             "december_evaluation_seconds": "December dispatch and realized replay evaluation",
             "round_total_seconds": "complete round wall-clock time",
         },
@@ -261,7 +273,7 @@ def main() -> None:
         "method": "fine_grained_marginal_cost_gfcn_closed_loop",
         "solver": solver_name,
         "K_max": int(args.K_max),
-        "train_month": "2023-11",
+        "correction_train_validate_months": ["2023-10", "2023-11"],
         "test_month": "2023-12",
         "forecast_target": "netload_only",
         "correction_target": "netload_only",

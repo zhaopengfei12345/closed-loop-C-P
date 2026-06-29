@@ -1,8 +1,10 @@
-# Closed-Loop Predict-and-Optimize
+# FGMC-GFCN Distribution-Feeder Experiments
 
-This repository contains a cleaned implementation of the paper:
+This repository contains a cleaned implementation of the paper route:
 
-**Fine-Grained Marginal Cost Feedback-Based Closed-Loop Predict-and-Optimize Framework for Distribution System Scheduling**.
+**statistical net-load forecasting -> day-ahead distribution dispatch -> bidirectional marginal-cost feedback -> graph-flow residual correction -> realized replay evaluation**.
+
+The release keeps the distribution-feeder experiment code and processed hourly data. Experiment-search scripts, larger-system variants, diagnostic notebooks, cached forecasts, and generated result folders are intentionally excluded.
 
 ## What Is Included
 
@@ -10,6 +12,7 @@ This repository contains a cleaned implementation of the paper:
   - active/reactive distribution dispatch model;
   - DG, PV, ESS, voltage, branch-current, and real-time replay constraints;
   - shadow-price extraction from nodal active-power balance constraints.
+  - storage degradation cost is set to `30 AUD/MWh`.
 
 - `src/fgmc_gfcn/closed_loop.py`
   - bidirectional marginal-cost map construction;
@@ -18,7 +21,10 @@ This repository contains a cleaned implementation of the paper:
   - closed-loop residual training utilities and dispatch evaluation.
 
 - `scripts/train_forecaster.py`
-  - supports `lstm` and a `stgnn` baseline.
+  - 48-hour-to-24-hour STGNN net-load forecaster.
+
+- `scripts/run_baseline_dispatch.py`
+  - predict-then-optimize baseline evaluation on the test month.
 
 - `scripts/run_closed_loop_gfcn.py`
   - closed-loop FGMC-GFCN correction and evaluation.
@@ -34,6 +40,7 @@ Data provenance:
 - Solar-unit identification: AEMO CDEII available-generator metadata, filtered by `REGIONID=NSW1` and `CO2E_ENERGY_SOURCE=Solar`.
 - Prices: AEMO NSW1 DispatchIS reports.
 
+Important limitation: the CDEII generator metadata identifies solar DUIDs but does not provide plant-level latitude/longitude or meteorological variables. The current experiments do not use weather, irradiance, temperature, cloud-cover, or plant-coordinate features.
 
 ## Install
 
@@ -55,15 +62,17 @@ Train the statistical forecaster first:
 
 ```bash
 python scripts/train_forecaster.py \
-  --predictor stgnn \
-  --data-path data/processed_1h/aligned_dataset.csv
+  --data-path data/processed_1h/aligned_dataset.csv \
+  --output-dir results/stgnn_1h_forecast
 ```
+
+The forecaster writes `results/stgnn_1h_forecast/test_predictions.csv`, which is the input to the dispatch scripts.
 
 Evaluate the predict-then-optimize baseline:
 
 ```bash
 python scripts/run_baseline_dispatch.py \
-  --prediction-path results/forecast/test_predictions.csv \
+  --prediction-path results/stgnn_1h_forecast/test_predictions.csv \
   --output-dir results/fgmc_gfcn_baseline
 ```
 
@@ -71,11 +80,13 @@ Run the closed-loop GFCN correction:
 
 ```bash
 python scripts/run_closed_loop_gfcn.py \
-  --prediction-path results/test_predictions.csv \
+  --prediction-path results/stgnn_1h_forecast/test_predictions.csv \
   --output-dir results/fgmc_gfcn_iterative_dec \
   --K-max 5 \
   --m-map-mode dual
 ```
+
+`--m-map-mode dual` follows the paper route by constructing two-sided shadow-price maps. `--m-map-mode rt_imbalance` is retained as a faster settlement-spread proxy for debugging.
 
 ## Main Outputs
 
@@ -86,3 +97,37 @@ python scripts/run_closed_loop_gfcn.py \
 - `evaluation/dec_corrected_predictions.csv`: corrected net-load forecasts.
 - `final_december_comparison.csv`: baseline and closed-loop comparison.
 - `best_round_summary.json`: selected correction round and metrics.
+
+## Temporal Split
+
+A temporally ordered split is adopted to avoid information leakage:
+
+- January-September: train and validate the base STGNN forecasting model.
+- October-November: train and validate the GFCN correction models.
+- December: reserved for final dispatch testing.
+
+The forecaster therefore outputs October-December predictions; the closed-loop correction script uses October-November internally for correction training/validation and reports final metrics on December only.
+
+## Loss Function
+
+The default correction loss has two terms:
+
+```text
+L_final = 0.5 * L_mc(regret-weighted) + 0.01 * L_br
+```
+
+where `L_mc` is the boundary-aware bidirectional marginal-cost forecast-error loss. Dispatch regret is computed by dispatch-and-replay in the outer loop and used only as a capped sample weight:
+
+```text
+sample_weight = min(1 + 1.5 * regret_norm / mean(regret_norm), 5.0)
+```
+
+`L_br` is bounded residual regularization. There is no standalone differentiable regret term in the final objective.
+
+## Citation Metadata To Report
+
+When describing the PV source, use language such as:
+
+> AEMO CDEII available-generator metadata are used to identify solar DUIDs in the NSW1 region, and AEMO Dispatch SCADA provides the corresponding generation time series.
+
+Do not state that the AEMO metadata provide PV plant coordinates or meteorological data. The PV-to-bus mapping is synthetic for the test feeder and should not be interpreted as geographic matching.
