@@ -1,12 +1,4 @@
-﻿#!/usr/bin/env python3
-"""Train a 48h-to-24h forecast model on the distribution-feeder 1H dataset.
-
-Supported predictors:
-    * lstm: original sequence model.
-    * stgnn: graph-temporal model using a Pearson-correlation adjacency matrix.
-"""
-
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
 import math
