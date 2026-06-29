@@ -1,27 +1,3 @@
-﻿#!/usr/bin/env python3
-"""Regret-weighted bidirectional marginal-cost correction components.
-
-This module implements the source/load-focused version of the proposed method:
-
-    net-load forecast -> active/reactive dispatch with real price
-    -> two-sided shadow-price maps -> bounded residual correction.
-
-Electricity price is not a forecasting target and is not an explicit neural-network
-input.  The real day-ahead price is used only as an exogenous parameter inside
-optimization to compute dispatch decisions and shadow prices.  Its economic
-impact is implicitly reflected in the marginal-cost maps.
-
-Corrector input channels:
-    1. current net-load forecast, bus-wise standardized;
-    2. M_plus: boundary-aware marginal-cost map for over-prediction errors;
-    3. M_minus: boundary-aware marginal-cost map for under-prediction errors;
-    4. B_boundary: local shadow-price switching indicator.
-
-Training loss:
-    regret-weighted, boundary-aware, bidirectional marginal-cost loss
-    + bounded-correction regularization.
-"""
-
 from __future__ import annotations
 
 import json
