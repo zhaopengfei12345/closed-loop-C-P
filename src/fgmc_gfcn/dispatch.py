@@ -1,21 +1,3 @@
-﻿#!/usr/bin/env python3
-"""Unified distribution-feeder active/reactive day-ahead dispatch model.
-
-This module is designed to replace the duplicated dispatch logic in the earlier
-baseline / CAF-CPO scripts.  It adds:
-  * DG / PV / ESS reactive-power decisions;
-  * DistFlow / SOCP branch-flow constraints with current limits;
-  * storage degradation cost;
-  * one-sided and two-sided marginal-cost maps based on active-power-balance duals.
-
-Voltage and line-current constraints are enforced as hard security constraints.
-During realized replay, the day-ahead grid schedule is fixed, while real-time
-grid imbalance, DG/ESS redispatch, PV curtailment, and reactive-power redispatch
-are optimized to balance realized net-load deviations and maintain network security.
-
-The model is a continuous convex SOCP/QCP and is intended for Gurobi.
-"""
-
 from __future__ import annotations
 
 import json
